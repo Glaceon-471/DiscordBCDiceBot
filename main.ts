@@ -1,34 +1,10 @@
-import { createBot, getBotIdFromToken, startBot, Intents } from "@discordeno/mod.ts";
-// import { BCDiceVersionCommand, BCDiceRoll } from "./commands.ts";
-import { CreateSlashApplicationCommand, Bot, Interaction, InteractionResponseTypes } from "@discordeno/mod.ts";
-import { ApplicationCommandOptionTypes, ApplicationCommandTypes } from "@discordeno/types/shared.ts";
-import { ApplicationCommandOptionChoice } from "@discordeno/transformers/applicationCommandOptionChoice.ts"
+import { BCDiceCommand, ConfigCommand } from "./commands.ts";
+import { createBot, getBotIdFromToken, startBot, Intents, InteractionTypes } from "@discordeno/mod.ts";
 
-interface SlashCommand {
-    info: CreateSlashApplicationCommand;
-    response(bot: Bot, interaction: Interaction): Promise<void>;
-};
+const BotToken: string = Deno.env.get("BOT_TOKEN") as string;
 
-export const BCDice: SlashCommand = {
-    info: {
-        name: "bcdice",
-        description: "BCDiceのバージョンを表示します。",
-        type: ApplicationCommandTypes.ChatInput
-    },
-    response: async (bot, interaction) => {
-        return await bot.helpers.sendInteractionResponse(interaction.id, interaction.token, {
-            type: InteractionResponseTypes.ChannelMessageWithSource,
-            data: {
-                content: `BCDiceバージョン : 出力できないよ....もう....`,
-                flags: 0b01000000
-            }
-        });
-    }
-}
-
-const BotToken: string = Deno.env.get("BOT_TOKEN")!;
-
-const bot = createBot({
+const Commands = [BCDiceCommand, ConfigCommand];
+const Bot = createBot({
     token: BotToken,
     botId: getBotIdFromToken(BotToken) as bigint,
     
@@ -39,17 +15,19 @@ const bot = createBot({
             console.log(`${payload.user.username} is ready!`);
         },
         interactionCreate: async (_bot, interaction) => {
-            // await BCDiceVersionCommand.response(bot, interaction);
-            await BCDice.response(bot, interaction);
+            if (interaction.guildId == undefined) return;
+            switch (interaction.type) {
+                case InteractionTypes.ApplicationCommand:
+                    await Commands.find(x => x.info.name == interaction.data?.name)?.response(Bot, interaction);
+                    break;
+            }
         }
     }
 });
 
-const info_list = [BCDice.info];// [BCDiceVersionCommand.info, BCDiceRoll.info]
-info_list.forEach(element => {
-    bot.helpers.createGlobalApplicationCommand(element);
-});
-bot.helpers.upsertGlobalApplicationCommands(info_list);
+for (const element of Commands) {
+    Bot.helpers.createGlobalApplicationCommand(element.info);
+}
+Bot.helpers.upsertGlobalApplicationCommands(Commands.map(x => x.info));
 
-
-await startBot(bot);
+await startBot(Bot);

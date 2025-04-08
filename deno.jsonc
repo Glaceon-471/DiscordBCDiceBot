@@ -1,12 +1,14 @@
 {
+    // deno.lockを生成しないように
     "lock": false,
-    // deno task start
+    // deno task startで実行
     "tasks": {
-        "start": "deno run -A --watch ./main.ts"
+        "start": "deno run -A --watch --env ./main.ts"
     },
     "imports": {
         "$std/": "https://deno.land/std@0.224.0/",
         "@bcdice": "npm:bcdice",
+        "@db": "https://deno.land/x/sqlite@v3.9.1/mod.ts",
         "@discordeno/": "https://deno.land/x/discordeno@18.0.1/"
     }
 }
