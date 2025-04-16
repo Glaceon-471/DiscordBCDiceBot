@@ -1,5 +1,5 @@
 import bcdice from '@bcdice';
-import { calculatePermissions, Interaction, Member, PermissionStrings } from "@discordeno/mod.ts";
+import { ApplicationCommandOptionTypes, calculatePermissions, Interaction, InteractionDataOption, Member, PermissionStrings } from "@discordeno/mod.ts";
 
 const Loader = new bcdice.DynamicLoader();
 
@@ -40,6 +40,10 @@ export function getParameter(interaction: Interaction, ...names: string[]) {
         }
     }
     return data;
+}
+
+export function getSubCommandName(data: InteractionDataOption[] | undefined) {
+    return data?.find(x => x.type == ApplicationCommandOptionTypes.SubCommand || x.type == ApplicationCommandOptionTypes.SubCommandGroup)?.name;
 }
 
 export function checkPermissionByMember(member: Member, permission: PermissionStrings): boolean {
