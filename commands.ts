@@ -1,8 +1,8 @@
-import { getConfig, getChannelConfig, setConfig, ConfigsData, stringify } from "./config.ts";
-import { SystemInfos, getSystem, getParameter, checkPermissionByMember } from "./helper.ts";
+import { setConfigsData, getServerConfig, setServerConfig, getChannelConfig, setChannelConfig, getCOSConfigsData, removeChannelConfig, stringify } from "./config.ts";
+import { SystemInfos, getSystem, getParameter, getSubCommandName, checkPermissionByMember } from "./helper.ts";
 import bcdice from '@bcdice';
-import { CreateSlashApplicationCommand, Bot, Interaction, InteractionResponseTypes, transformEmbed, DiscordChannel } from "@discordeno/mod.ts";
-import { ApplicationCommandOptionTypes } from "@discordeno/types/shared.ts";
+import { CreateSlashApplicationCommand, Bot, Interaction, InteractionResponseTypes, transformEmbed, getChannel } from "@discordeno/mod.ts";
+import { ApplicationCommandOptionTypes, ChannelTypes } from "@discordeno/types/shared.ts";
 
 interface SlashCommand {
     info: CreateSlashApplicationCommand;
@@ -56,7 +56,7 @@ export const BCDiceCommand: SlashCommand = {
                     {
                         type: ApplicationCommandOptionTypes.String,
                         name: "system",
-                        description: "ヘルプの表示するシステム (デフォルト:DiceBot)"
+                        description: "ヘルプの表示するシステム (デフォルト:実行するチャンネルのデフォルトシステム)"
                     },
                     {
                         type: ApplicationCommandOptionTypes.Boolean,
@@ -79,7 +79,7 @@ export const BCDiceCommand: SlashCommand = {
                     {
                         type: ApplicationCommandOptionTypes.String,
                         name: "system",
-                        description: "振るダイスのシステムを指定します (デフォルト:DiceBot)"
+                        description: "振るダイスのシステムを指定します (デフォルト:実行するチャンネルのデフォルトシステム)"
                     },
                     {
                         type: ApplicationCommandOptionTypes.Boolean,
@@ -91,7 +91,7 @@ export const BCDiceCommand: SlashCommand = {
         ]
     },
     response: async (bot, interaction) => {
-        switch (interaction.data?.options?.find(x => x.type == ApplicationCommandOptionTypes.SubCommand)?.name) {
+        switch (getSubCommandName(interaction.data?.options)) {
             case "version":
             {
                 return await bot.helpers.sendInteractionResponse(interaction.id, interaction.token, {
@@ -102,38 +102,9 @@ export const BCDiceCommand: SlashCommand = {
                     }
                 });
             }
-            case "help":
-            {
-                const system = await getSystem(getParameter(interaction, "help", "system")?.value as string);
-                return await bot.helpers.sendInteractionResponse(interaction.id, interaction.token, {
-                    type: InteractionResponseTypes.ChannelMessageWithSource,
-                    data: {
-                        embeds: [
-                            transformEmbed(bot, {
-                                title: `${system.NAME}`,
-                                description: system.HELP_MESSAGE
-                            })
-                        ],
-                        flags: (getParameter(interaction, "help", "only_yourself")?.value as boolean ?? true) ? 0b01000000 : 0
-                    }
-                });
-            }
-            case "roll":
-            {
-                const system = await getSystem(getParameter(interaction, "roll", "system")?.value as string);
-                return await bot.helpers.sendInteractionResponse(interaction.id, interaction.token, {
-                    type: InteractionResponseTypes.ChannelMessageWithSource,
-                    data: {
-                        content: system.eval(getParameter(interaction, "roll", "dice")?.value as string)?.text,
-                        flags: (getParameter(interaction, "roll", "only_yourself")?.value as boolean ?? false) ? 0b01000000 : 0
-                    }
-                });
-            }
-        }
-        switch (interaction.data?.options?.find(x => x.type == ApplicationCommandOptionTypes.SubCommandGroup)?.name) {
             case "system":
             {
-                switch (getParameter(interaction, "system")?.options?.find(x => x.type == ApplicationCommandOptionTypes.SubCommand)?.name) {
+                switch (getSubCommandName(getParameter(interaction, "system")?.options)) {
                     case "search":
                     {
                         const id = getParameter(interaction, "system", "search", "id")?.value as string;
@@ -189,6 +160,52 @@ export const BCDiceCommand: SlashCommand = {
                 }
                 break;
             }
+            case "help":
+            {
+                const system = await getSystem(
+                    getParameter(interaction, "help", "system")?.value as string ??
+                    getCOSConfigsData(interaction.guildId!, interaction.channelId!, "DefaultSystem")
+                );
+                return await bot.helpers.sendInteractionResponse(interaction.id, interaction.token, {
+                    type: InteractionResponseTypes.ChannelMessageWithSource,
+                    data: {
+                        embeds: [
+                            transformEmbed(bot, {
+                                title: system.NAME,
+                                description: system.HELP_MESSAGE
+                            })
+                        ],
+                        flags: (getParameter(interaction, "help", "only_yourself")?.value as boolean ?? true) ? 0b01000000 : 0
+                    }
+                });
+            }
+            case "roll":
+            {
+                const system = await getSystem(
+                    getParameter(interaction, "roll", "system")?.value as string ??
+                    getCOSConfigsData(interaction.guildId!, interaction.channelId!, "DefaultSystem")
+                );
+                const dice = system.eval(getParameter(interaction, "roll", "dice")?.value as string);
+                if (dice == undefined) {
+                    return await bot.helpers.sendInteractionResponse(interaction.id, interaction.token, {
+                        type: InteractionResponseTypes.ChannelMessageWithSource,
+                        data: {
+                            content: "有効なコマンドではありません\nシステムが違う可能性があります",
+                            flags: 0b01000000
+                        }
+                    });
+                }
+                bot.helpers.sendMessage(interaction.channelId!, {
+                    content: "シークレットダイス"
+                })
+                return await bot.helpers.sendInteractionResponse(interaction.id, interaction.token, {
+                    type: InteractionResponseTypes.ChannelMessageWithSource,
+                    data: {
+                        content: dice.text,
+                        flags: (getParameter(interaction, "roll", "only_yourself")?.value as boolean ?? false) || dice.secret ? 0b01000000 : 0
+                    }
+                });
+            }
         }
     }
 }
@@ -200,18 +217,14 @@ export const ConfigCommand: SlashCommand = {
         options: [
             {
                 type: ApplicationCommandOptionTypes.SubCommand,
-                name: "init",
-                description: "サーバー設定を初期化します (管理者限定)"
-            },
-            {
-                type: ApplicationCommandOptionTypes.SubCommand,
                 name: "view",
                 description: "設定を表示します",
                 options: [
                     {
                         type: ApplicationCommandOptionTypes.Channel,
                         name: "channel",
-                        description: "どのチャンネルの設定を表示するか (デフォルト:実行したチャンネル)"
+                        description: "どのチャンネルの設定を表示するか (デフォルト:実行したチャンネル)",
+                        channelTypes: [ChannelTypes.GuildText, ChannelTypes.GuildVoice, ChannelTypes.GuildForum]
                     },
                     {
                         type: ApplicationCommandOptionTypes.Boolean,
@@ -228,36 +241,13 @@ export const ConfigCommand: SlashCommand = {
         ]
     },
     response: async (bot, interaction) => {
-        switch (interaction.data?.options?.find(x => x.type == ApplicationCommandOptionTypes.SubCommand)?.name) {
-            case "init":
-            {
-                if (!checkPermissionByMember(interaction.member!, "ADMINISTRATOR")) {
-                    return await bot.helpers.sendInteractionResponse(interaction.id, interaction.token, {
-                        type: InteractionResponseTypes.ChannelMessageWithSource,
-                        data: {
-                            content: "あなたの権限では実行できません",
-                            flags: 0b01000000
-                        }
-                    });
-                }
-                setConfig(interaction.guildId!.toString(), {
-                    DefaultSystem: "DiceBot",
-                    ChannelConfigs: new Map()
-                });
-                return await bot.helpers.sendInteractionResponse(interaction.id, interaction.token, {
-                    type: InteractionResponseTypes.ChannelMessageWithSource,
-                    data: {
-                        content: "サーバー設定を初期化しました",
-                        flags: 0b01000000
-                    }
-                });
-            }
+        switch (getSubCommandName(interaction.data?.options)) {
             case "view":
             {
-                const id = (getParameter(interaction, "view", "channel")?.value as DiscordChannel)?.id ?? interaction.channelId!
+                const id = BigInt(getParameter(interaction, "view", "channel")?.value as string ?? interaction.channelId!);
                 if (getParameter(interaction, "view", "detail")?.value as boolean ?? false) {
-                    const text1 = stringify(getConfig(interaction.guildId!.toString()));
-                    const text2 = stringify(getChannelConfig(interaction.guildId!.toString(), id));
+                    const text1 = stringify(getServerConfig(interaction.guildId!));
+                    const text2 = stringify(getChannelConfig(interaction.guildId!, id));
                     return await bot.helpers.sendInteractionResponse(interaction.id, interaction.token, {
                         type: InteractionResponseTypes.ChannelMessageWithSource,
                         data: {
@@ -276,9 +266,239 @@ export const ConfigCommand: SlashCommand = {
                     });
                 }
                 else {
-                    const config = getConfig(interaction.guildId!.toString());
-                    const channel = getChannelConfig(interaction.guildId!.toString(), id);
+                    const config = getServerConfig(interaction.guildId!);
+                    const channel = getChannelConfig(interaction.guildId!, id);
+                    return await bot.helpers.sendInteractionResponse(interaction.id, interaction.token, {
+                        type: InteractionResponseTypes.ChannelMessageWithSource,
+                        data: {
+                            embeds: [
+                                transformEmbed(bot, {
+                                    title: `設定`,
+                                    description: stringify({
+                                        DefaultSystem: channel.DefaultSystem ?? config.DefaultSystem
+                                    })
+                                })
+                            ],
+                            flags: (getParameter(interaction, "view", "only_yourself")?.value as boolean ?? true) ? 0b01000000 : 0
+                        }
+                    });
                 }
+            }
+        }
+    }
+}
+
+export const ServerConfigCommand: SlashCommand = {
+    info: {
+        name: "server_config",
+        description: "設定関連のコマンドです",
+        options: [
+            {
+                type: ApplicationCommandOptionTypes.SubCommandGroup,
+                name: "set",
+                description: "設定を変更します (管理者限定)",
+                options: [
+                    {
+                        type: ApplicationCommandOptionTypes.SubCommand,
+                        name: "default_system",
+                        description: "デフォルトのシステムを変更します (管理者限定)",
+                        options: [
+                            {
+                                type: ApplicationCommandOptionTypes.String,
+                                name: "value",
+                                description: "変更する値",
+                                required: true
+                            }
+                        ]
+                    },
+                    {
+                        type: ApplicationCommandOptionTypes.SubCommand,
+                        name: "chat_dice_roll",
+                        description: "チャットでダイスロールが可能かを変更します (管理者限定)",
+                        options: [
+                            {
+                                type: ApplicationCommandOptionTypes.Boolean,
+                                name: "value",
+                                description: "変更する値",
+                                required: true
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    },
+    response: async (bot, interaction) => {
+        switch (getSubCommandName(interaction.data?.options)) {
+            case "set":
+            {
+                if (!checkPermissionByMember(interaction.member!, "ADMINISTRATOR")) {
+                    return await bot.helpers.sendInteractionResponse(interaction.id, interaction.token, {
+                        type: InteractionResponseTypes.ChannelMessageWithSource,
+                        data: {
+                            content: "あなたの権限では実行できません",
+                            flags: 0b01000000
+                        }
+                    });
+                }
+                switch (getSubCommandName(getParameter(interaction, "set")?.options)) {
+                    case "default_system":
+                    {
+                        const value = getParameter(interaction, "set", "default_system", "value")?.value as string;
+                        if (SystemInfos.findIndex(x => x.id == value || x.name == value) == -1) {
+                            return await bot.helpers.sendInteractionResponse(interaction.id, interaction.token, {
+                                type: InteractionResponseTypes.ChannelMessageWithSource,
+                                data: {
+                                    content: `${value}というシステムを確認することができませんでした`,
+                                    flags: 0b01000000
+                                }
+                            });
+                        }
+                        const config = getServerConfig(interaction.guildId!);
+                        setConfigsData(config, "DefaultSystem", value);
+                        setServerConfig(interaction.guildId!, config);
+                        return await bot.helpers.sendInteractionResponse(interaction.id, interaction.token, {
+                            type: InteractionResponseTypes.ChannelMessageWithSource,
+                            data: {
+                                content: `設定を変更しました。\nデフォルトシステム : ${value}`
+                            }
+                        });
+                    }
+                    case "chat_dice_roll":
+                    {
+                        const value = getParameter(interaction, "set", "chat_dice_roll", "value")?.value as boolean;
+                        const config = getServerConfig(interaction.guildId!);
+                        setConfigsData(config, "ChatDiceRoll", value);
+                        setServerConfig(interaction.guildId!, config);
+                        return await bot.helpers.sendInteractionResponse(interaction.id, interaction.token, {
+                            type: InteractionResponseTypes.ChannelMessageWithSource,
+                            data: {
+                                content: `設定を変更しました。\nチャットでダイスロールが可能 : ${value}`
+                            }
+                        });
+                    }
+                }
+                break;
+            }
+        }
+    }
+}
+
+export const ChannelConfigCommand: SlashCommand = {
+    info: {
+        name: "channel_config",
+        description: "設定関連のコマンドです",
+        options: [
+            {
+                type: ApplicationCommandOptionTypes.SubCommandGroup,
+                name: "set",
+                description: "チャンネルの設定を変更します (管理者 及び チャンネル作成者限定)",
+                options: [
+                    {
+                        type: ApplicationCommandOptionTypes.SubCommand,
+                        name: "default_system",
+                        description: "チャンネルのデフォルトのシステムを変更します (管理者 及び チャンネル作成者限定)",
+                        options: [
+                            {
+                                type: ApplicationCommandOptionTypes.String,
+                                name: "value",
+                                description: "変更する値",
+                                required: true
+                            }
+                        ]
+                    },
+                    {
+                        type: ApplicationCommandOptionTypes.SubCommand,
+                        name: "chat_dice_roll",
+                        description: "チャンネルのチャットでダイスロールが可能かを変更します (管理者 及び チャンネル作成者限定)",
+                        options: [
+                            {
+                                type: ApplicationCommandOptionTypes.Boolean,
+                                name: "value",
+                                description: "変更する値",
+                                required: true
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                type: ApplicationCommandOptionTypes.SubCommand,
+                name: "remove",
+                description: "チャンネルの設定を削除します (管理者 及び チャンネル作成者限定)"
+            }
+        ]
+    },
+    response: async (bot, interaction) => {
+        switch (getSubCommandName(interaction.data?.options)) {
+            case "set":
+            {
+                if (!(checkPermissionByMember(interaction.member!, "ADMINISTRATOR") || (await getChannel(bot, interaction.channelId!)).ownerId == interaction.user.id)) {
+                    return await bot.helpers.sendInteractionResponse(interaction.id, interaction.token, {
+                        type: InteractionResponseTypes.ChannelMessageWithSource,
+                        data: {
+                            content: "あなたの権限では実行できません",
+                            flags: 0b01000000
+                        }
+                    });
+                }
+                switch (getSubCommandName(getParameter(interaction, "set")?.options)) {
+                    case "default_system":
+                    {
+                        const value = getParameter(interaction, "set", "default_system", "value")?.value as string;
+                        if (SystemInfos.findIndex(x => x.id == value || x.name == value) == -1) {
+                            return await bot.helpers.sendInteractionResponse(interaction.id, interaction.token, {
+                                type: InteractionResponseTypes.ChannelMessageWithSource,
+                                data: {
+                                    content: `${value}というシステムを確認することができませんでした`,
+                                    flags: 0b01000000
+                                }
+                            });
+                        }
+                        const config = getChannelConfig(interaction.guildId!, interaction.channelId!);
+                        setConfigsData(config, "DefaultSystem", value);
+                        setChannelConfig(interaction.guildId!, interaction.channelId!, config);
+                        return await bot.helpers.sendInteractionResponse(interaction.id, interaction.token, {
+                            type: InteractionResponseTypes.ChannelMessageWithSource,
+                            data: {
+                                content: `チャンネル設定を変更しました。\nデフォルトシステム : ${value}`
+                            }
+                        });
+                    }
+                    case "chat_dice_roll":
+                    {
+                        const value = getParameter(interaction, "channel", "chat_dice_roll", "value")?.value as boolean;
+                        const config = getChannelConfig(interaction.guildId!, interaction.channelId!);
+                        setConfigsData(config, "ChatDiceRoll", value);
+                        setChannelConfig(interaction.guildId!, interaction.channelId!, config);
+                        return await bot.helpers.sendInteractionResponse(interaction.id, interaction.token, {
+                            type: InteractionResponseTypes.ChannelMessageWithSource,
+                            data: {
+                                content: `チャンネル設定を変更しました。\nチャットでダイスロールが可能 : ${value}`
+                            }
+                        });
+                    }
+                }
+                break;
+            }
+            case "remove":
+            {
+                if (!(checkPermissionByMember(interaction.member!, "ADMINISTRATOR") || (await getChannel(bot, interaction.channelId!)).ownerId == interaction.user.id)) {
+                    return await bot.helpers.sendInteractionResponse(interaction.id, interaction.token, {
+                        type: InteractionResponseTypes.ChannelMessageWithSource,
+                        data: {
+                            content: "あなたの権限では実行できません",
+                            flags: 0b01000000
+                        }
+                    });
+                }
+                removeChannelConfig(interaction.guildId!, interaction.channelId!);
+                return await bot.helpers.sendInteractionResponse(interaction.id, interaction.token, {
+                    type: InteractionResponseTypes.ChannelMessageWithSource,
+                    data: {
+                        content: `チャンネル設定を削除しました`
+                    }
+                });
             }
         }
     }
