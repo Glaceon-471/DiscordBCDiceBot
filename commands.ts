@@ -195,9 +195,11 @@ export const BCDiceCommand: SlashCommand = {
                         }
                     });
                 }
-                bot.helpers.sendMessage(interaction.channelId!, {
-                    content: "シークレットダイス"
-                })
+                if (dice.secret) {
+                    bot.helpers.sendMessage(interaction.channelId!, {
+                        content: "シークレットダイス"
+                    });
+                }
                 return await bot.helpers.sendInteractionResponse(interaction.id, interaction.token, {
                     type: InteractionResponseTypes.ChannelMessageWithSource,
                     data: {
