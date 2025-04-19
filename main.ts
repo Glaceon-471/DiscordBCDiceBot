@@ -80,3 +80,7 @@ for (const element of Commands) {
 Bot.helpers.upsertGlobalApplicationCommands(Commands.map(x => x.info));
 
 await startBot(Bot);
+
+Deno.cron("Continuous Request", "*/10 * * * *", () => {
+    console.log("running...");
+});
